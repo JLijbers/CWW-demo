@@ -1,2 +1,2 @@
 # CWW-demo
- Demo application to chat with your documents
+Test application to chat with websites
