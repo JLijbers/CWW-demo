@@ -9,6 +9,7 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.memory import ConversationBufferMemory
 from langchain.memory.chat_message_histories import StreamlitChatMessageHistory
 from langchain.vectorstores import Chroma
+from langchain.retrievers import BM25Retriever, EnsembleRetriever
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,9 +27,7 @@ st.title('⚽ Chat met: Korfbaldws.nl')
 def get_retriever():
     embeddings = OpenAIEmbeddings()
     vectordb = Chroma(persist_directory='db', embedding_function=embeddings)
-
     retriever = vectordb.as_retriever(search_type='mmr', k=3)
-
     return retriever
 
 
