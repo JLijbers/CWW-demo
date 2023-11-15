@@ -44,9 +44,9 @@ def custom_search(query, api_key, cx):
 
     # Check for errors or empty search results
     if 'error' in data:
-        print("Error:", data['error']['message'])
+        return context
     elif 'items' not in data:
-        print("No search results found.")
+        return context
     else:
         # Extract search results
         search_results = data['items']

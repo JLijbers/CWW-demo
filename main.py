@@ -1,19 +1,20 @@
 import os
 import streamlit as st
 from dotenv import load_dotenv
+from operator import itemgetter
 from langchain.callbacks import StreamingStdOutCallbackHandler
 
-from langchain.chains import ConversationalRetrievalChain
 from langchain.chat_models import ChatOpenAI
 from langchain.llms import GPT4All
-from langchain.embeddings import OpenAIEmbeddings
 from langchain.memory import ConversationBufferMemory
+from langchain.callbacks.base import BaseCallbackHandler
 from langchain.memory.chat_message_histories import StreamlitChatMessageHistory
-from langchain.prompts import ChatPromptTemplate
+from langchain.prompts import PromptTemplate
 from langchain.schema.output_parser import StrOutputParser
-from langchain.vectorstores import Chroma
+from langchain.schema.runnable import RunnableLambda, RunnablePassthrough
 
-from functions import reciprocal_rank_fusion
+from functions import custom_search
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,52 +28,62 @@ st.set_page_config(
 st.title('⚽ Chat met: Korfbaldws.nl')
 
 
-@st.cache_resource(ttl='1h')
-# Supporting function and class
-def get_retriever():
-    embeddings = OpenAIEmbeddings()
-    vectordb = Chroma(persist_directory='db', embedding_function=embeddings)
-    retriever = vectordb.as_retriever(search_type='mmr', k=3)
-    return retriever
-
-
 # Start
-# Set Chroma vector DB as retriever
-retriever = get_retriever()
+class StreamHandler(BaseCallbackHandler):
+    def __init__(self, container: st.delta_generator.DeltaGenerator, initial_text: str = ""):
+        self.container = container
+        self.text = initial_text
+        self.run_id_ignore_token = None
 
-# Set use of chat history
-msgs = StreamlitChatMessageHistory(key='langchain_messages')
-memory = ConversationBufferMemory(memory_key='chat_history', chat_memory=msgs, return_messages=True)
+    def on_llm_start(self, serialized: dict, prompts: list, **kwargs):
+        # Workaround to prevent showing the rephrased question as output
+        if prompts[0].startswith("Human"):
+            self.run_id_ignore_token = kwargs.get("run_id")
+
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        if self.run_id_ignore_token == kwargs.get("run_id", False):
+            return
+        self.text += token
+        self.container.markdown(self.text)
+
 
 # Initialize the ChatOpenAI model
-callbacks = [StreamingStdOutCallbackHandler()]
-llm = ChatOpenAI(model="gpt-3.5-turbo-16k", temperature=0.1, streaming=True)
+#llm = ChatOpenAI(model="gpt-3.5-turbo-1106", temperature=0.1, streaming=True, callbacks=[stream_handler])
 #llm = GPT4All(model=gpt4_path, callbacks=callbacks, verbose=True, streaming=True)
 
-# Generate multiple search queries
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant that generates multiple search queries based on a single input query."),
-    ("user", "Generate multiple search queries related to: {original_query}"),
-    ("user", "OUTPUT (4 queries):")])
-generate_queries = prompt | ChatOpenAI(temperature=0) | StrOutputParser() | (lambda x: x.split("\n"))
-
 # Create the Q&A chain
-chain = generate_queries | retriever.map() | reciprocal_rank_fusion
-qa_chain = ConversationalRetrievalChain.from_llm(llm=llm, retriever=retriever, memory=memory)
+template = """Geef antwoord op de vraag en haal je antwoord uit de meegegeven context.
+
+Vraag: 
+{question}
+
+Context: 
+{context}
+
+Antwoord:
+"""
+
+qa_prompt = PromptTemplate.from_template(template)
+#qa_chain = qa_prompt | llm | StrOutputParser()
 
 # Streamlit settings
-if st.sidebar.button('Berichtgeschiedenis wissen') or len(msgs.messages) == 0:
-    msgs.clear()
-    msgs.add_ai_message(f'Vraag me alles over: {website_url}!')
+if "messages" not in st.session_state or st.sidebar.button("Berichtgeschiedenis wissen"):
+    st.session_state["messages"] = [{"role": "assistant", "content": f'Vraag me alles over: {website_url}!'}]
 
-avatars = {'human': 'user', 'ai': 'assistant'}
-for msg in msgs.messages:
-    st.chat_message(avatars[msg.type]).write(msg.content)
+avatars = {"human": "user", "ai": "assistant"}
+for msg in st.session_state.messages:
+    st.chat_message(msg["role"]).write(msg["content"])
 
 if user_query := st.chat_input(placeholder='Wat wil je weten over de mooiste korfbalvereniging van Nederland?'):
-    st.chat_message('user').write(user_query)
+    st.session_state.messages.append({"role": "user", "content": user_query})
+    st.chat_message("user").write(user_query)
+    retrieved_context = custom_search(user_query, os.environ.get("GOOGLE_API_KEY"), os.environ.get("CX"))
 
-    with st.chat_message('assistant'):
-        # Run the Q&A chain
-        #response = qa_chain.run(user_query, callbacks=callbacks)
-        response = chain.invoke({"original_query": user_query})
+    with st.chat_message("assistant"):
+        stream_handler = StreamHandler(st.empty())
+        llm = ChatOpenAI(model="gpt-3.5-turbo-1106", temperature=0.1, streaming=True, callbacks=[stream_handler])
+        qa_chain = qa_prompt | llm | StrOutputParser()
+        response = qa_chain.invoke({"question": user_query, "context": retrieved_context})
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.write(response)
+

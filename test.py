@@ -1,6 +1,5 @@
 import os
 from dotenv import load_dotenv
-from langchain.callbacks import StreamingStdOutCallbackHandler
 
 from langchain.chat_models import ChatOpenAI
 from langchain.llms import GPT4All
@@ -16,7 +15,7 @@ load_dotenv()
 
 # Start
 # Initialize the LLM-model
-llm = ChatOpenAI(model="gpt-3.5-turbo-16k", temperature=0.1, streaming=True)
+llm = ChatOpenAI(model="gpt-3.5-turbo-1106", temperature=0.1, streaming=True)
 #llm = GPT4All(model=gpt4_path, callbacks=callbacks, verbose=True, streaming=True)
 
 # Get context by performing a custom google search
@@ -38,4 +37,4 @@ qa_prompt = PromptTemplate.from_template(template)
 qa_chain = qa_prompt | llm | StrOutputParser()
 
 response = qa_chain.invoke({"question": user_query, "context": retrieved_context})
-print(response)
+#print(response)
