@@ -1,3 +1,5 @@
 .env
 /db
 /.idea
+/models/*
+__pycache__
